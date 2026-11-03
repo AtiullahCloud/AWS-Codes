@@ -6,54 +6,58 @@ terraform {
     }
   }
 }
-
 provider "aws" {
   region = "us-east-1"
 }
 
 locals {
-  users_data = yamldecode(file("./users.yaml")).users
-
-  user_role_pair = flatten([for user in local.users_data : [for role in user.roles :{
-    username = user.username
-    role = role
-  }]])
+  
+  project = "project-01"
 }
 
-output "output_users" {
-  value = local.users_data
-}
+# # VPC creation
 
-
-resource "aws_iam_user" "main" {
-  for_each = toset(local.users_data[*].username)
-  name = each.value
-}
-
-# password creation
-
-resource "aws_iam_user_login_profile" "profile" {
-  for_each = aws_iam_user.main
-  user = each.value.name
-  password_length = 12
-
-  lifecycle {
-    ignore_changes = [ 
-        password_length,
-        password_reset_required,pgp_key
-     ]
+resource "aws_vpc" "my-vpc" {
+  
+  cidr_block = "10.0.0.0/16"
+  tags = {
+    Name = "${local.project}-vpc"
   }
-
 }
 
-# Attaching policy
+# # Create subnet
 
-resource "aws_iam_user_policy_attachment" "main" {
-  for_each = {
-    for pair in local.user_role_pair :
-   "${pair.username}-${pair.role}" => pair
+resource "aws_subnet" "main" {
+  
+  vpc_id = aws_vpc.my-vpc.id
+  cidr_block = "10.0.${count.index}.0/24"
+ count = 2
+  tags = {
+    Name = "${local.project}-subnet-${count.index}"
   }
+}
 
-  user = aws_iam_user.main[each.value.username].name
-  policy_arn = "arn:aws:iam::aws:policy/${each.value.role}"
+output "aws_subnet_id" {
+    value = aws_subnet.main[0].id
+}
+
+# # craete 4 EC2 instance
+
+resource "aws_instance" "main" {
+  
+  for_each = var.ec2_map
+
+  # we will get each.key and each.value
+   ami = each.value.ami                     
+  instance_type = each.value.instance_type
+  subnet_id = element(aws_subnet.main[*].id , index(keys(var.ec2_map ),each.key) % length(aws_subnet.main))
+  
+ tags = {
+   Name = "${local.project}-instance-${each.key}"
+ }
+}
+
+output "subnet_id" {
+  
+  value = aws_subnet.main[1].id
 }
